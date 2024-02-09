@@ -97,7 +97,7 @@ class YOLOInference:
 # Example usage
 desired_classes = ['Adjacent-Bundle', 'Complex-Bundle', 'Damaged-Item', 'Sequential-Bundle', 'Stacked-Bundle', 'Top-Most-Item']
 yolo_inference = YOLOInference(
-    model_path='/home/mzahana/datasets/Silki/Bundle_Detection.v1i.yolov8/runs/segment/v8s_v1i_b32_ep100/weights/best.pt',
+    model_path='/home/mzahana/datasets/Silki/Bundle_Detection.v3i.yolov8/runs/segment/yolov8n_v3i_ep109/weights/best.pt',
     input_dir='/home/mzahana/datasets/Silki/raw_data/20240129',
     output_dir='/home/mzahana/datasets/Silki/raw_data/20240129_filtered_2',
     confidence=0.5,

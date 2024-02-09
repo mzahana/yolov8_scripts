@@ -38,6 +38,11 @@ yolo segment predict model=yolov8n-seg.pt source='https://ultralytics.com/images
 yolo segment predict model=path/to/best.pt source='https://ultralytics.com/images/bus.jpg'  # predict with custom model
 ```
 
+## Validation
+```bash
+yolo val model=path/to/best.pt data=data.yaml split=test
+```
+
 # Example commands
 ```bash
 yolo segment train data=/home/mzahana/datasets/Silki/Bundle_Detection.v1i.yolov8/data.yaml model=yolov8n-seg.pt epochs=100 imgsz=640 batch=128
