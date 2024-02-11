@@ -21,11 +21,13 @@ class ImageApp:
         self.output_dir = None
         self.images = []
         self.current_image_index = 0
+        self.saved_images_count = 0  # Initialize saved images counter
         self.setup_ui()
         self.image_label = None
 
     def setup_ui(self):
         self.root.title("Image Viewer")
+        self.root.geometry("800x600")  # Set initial size of the window
 
         # Frame for Directory Selection and Instructions
         self.top_frame = Frame(self.root)
@@ -67,6 +69,14 @@ class ImageApp:
         self.save_confirmation_label = Label(self.image_frame, text="")
         self.save_confirmation_label.pack()
 
+        # Saved Images Count Label
+        self.saved_images_count_label = Label(self.image_frame, text="Images saved: 0")
+        self.saved_images_count_label.pack()
+
+        # Navigation Feedback Label
+        self.navigation_feedback_label = Label(self.image_frame, text="")
+        self.navigation_feedback_label.pack()
+
         # Key Bindings
         self.root.bind("<Left>", self.previous_image)
         self.root.bind("<Right>", self.next_image)
@@ -103,16 +113,21 @@ class ImageApp:
         self.image_panel.image = img
         self.image_name_label.config(text=f"Current Image: {self.images[self.current_image_index]}")
         self.save_confirmation_label.config(text="")
+        self.navigation_feedback_label.config(text="")  # Clear navigation feedback
 
     def next_image(self, event):
         if self.images and self.current_image_index < len(self.images) - 1:
             self.current_image_index += 1
             self.display_image()
+        else:
+            self.navigation_feedback_label.config(text="End of the image list reached.")
 
     def previous_image(self, event):
         if self.images and self.current_image_index > 0:
             self.current_image_index -= 1
             self.display_image()
+        else:
+            self.navigation_feedback_label.config(text="Start of the image list reached.")
 
     def save_image(self):
         if self.images and self.output_dir:
@@ -120,6 +135,8 @@ class ImageApp:
             output_image_path = os.path.join(self.output_dir, self.images[self.current_image_index])
             img = Image.open(current_image_path)
             img.save(output_image_path)
+            self.saved_images_count += 1  # Increment the saved images counter
+            self.saved_images_count_label.config(text=f"Images saved: {self.saved_images_count}")  # Update the label
             self.save_confirmation_label.config(text="Image saved successfully.")
 
     def save_image_keyboard(self, event):
@@ -132,3 +149,5 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = ImageApp(root)
     root.mainloop()
+
+
