@@ -1,3 +1,39 @@
+"""
+Dataset Splitter for Images and Labels
+
+This script is designed to take a dataset consisting of images and their corresponding label files,
+stored in 'images' and 'labels' subdirectories within a specified parent directory, and split it into
+training and validation sets according to a user-defined percentage. The resulting datasets are
+organized into 'train' and 'valid' subdirectories, each containing 'images' and 'labels' folders for
+the split datasets.
+
+Key Features:
+- Automatically identifies and processes all .png and .jpg image files in the 'images' subdirectory.
+- Preserves the association between each image and its corresponding label file, ensuring that splits
+  maintain matching images and labels.
+- Allows for a customizable split percentage to determine the size of the training and validation sets.
+- Creates a structured output in the parent directory with distinct subdirectories for training and
+  validation datasets, facilitating easy use in machine learning projects.
+
+Usage:
+To use this script, specify the path to the parent directory containing the 'images' and 'labels'
+subdirectories. Also, define the desired percentage of the dataset to be used for training. The script
+will automatically handle the random splitting, copying of image and label files into the appropriate
+directories.
+
+Example:
+parent_dir = '/path/to/parent/directory'
+train_percentage = 0.8  # 80% for training, 20% for validation
+split_dataset(parent_dir, train_percentage)
+
+Dependencies:
+- Python's standard library modules: pathlib, shutil, and random.
+
+Ensure that your dataset is properly organized with all images stored in an 'images' subdirectory and
+all corresponding label files (with matching filenames) in a 'labels' subdirectory within the specified
+parent directory before running this script.
+"""
+
 import os
 import shutil
 from pathlib import Path

@@ -1,3 +1,35 @@
+"""
+YOLO Model Inference and Image/Label Sorting Script
+
+This script is designed to automate the process of running object detection on a dataset of images using a pre-trained YOLO model, and then categorizing these images (and their corresponding label files) into different directories based on the presence of user-specified object classes. The script operates on a structured dataset located within a specified parent directory, which must contain 'images' and 'labels' subdirectories for input data.
+
+Key Features:
+- Utilizes a pre-trained YOLO model to perform object detection on each image in the specified dataset.
+- Filters and categorizes images into 'bundle_images' or 'single_images' based on whether detected objects match a set of desired classes defined by the user. Corresponding label files are sorted similarly into 'bundle_labels' or 'single_labels'.
+- Automatically creates necessary output subdirectories within the parent directory for organized storage of filtered images and labels.
+- Provides flexibility in specifying the inference confidence threshold and desired object classes to tailor the sorting process to specific needs.
+
+Usage:
+To use this script, you need to provide the path to the YOLO model file, the path to the parent directory containing your 'images' and 'labels' subdirectories, an optional confidence threshold for detections, and a list of object classes of interest. The script then processes each image, performs inference, and sorts the images and labels into the appropriate directories based on the detection results.
+
+Example:
+desired_classes = ['person', 'bicycle', 'car']
+yolo_inference = YOLOInference(
+    model_path='/path/to/yolo/model.pt',
+    parent_dir='/path/to/dataset/parent/directory',
+    confidence=0.5,  # Optional confidence threshold
+    desired_classes=desired_classes
+)
+yolo_inference.run_inference()
+
+Dependencies:
+- ultralytics YOLO package for object detection.
+- PyTorch for deep learning operations.
+- Standard Python libraries: pathlib, shutil, os for file and directory operations.
+
+Ensure the ultralytics YOLO package, PyTorch, and necessary file handling libraries are installed and correctly set up in your Python environment before executing this script. The script is designed to work with datasets where each image in the 'images' subdirectory has a corresponding label file with the same name (but with a .txt extension) in the 'labels' subdirectory.
+"""
+
 import os
 import shutil
 from pathlib import Path
