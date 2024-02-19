@@ -11,3 +11,6 @@ model.export(format='engine', half=True)
 # model = YOLO('path/to/best.pt', task='detect')
 model = YOLO('path/to/export.engine',task='segment')
 results = model.predict(source='your/source/here', stream=False, device='cuda:0')
+
+# From command line
+# yolo export model=path/to/best.pt format=engine half=true workspace=8
