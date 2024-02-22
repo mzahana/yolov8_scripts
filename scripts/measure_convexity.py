@@ -4,7 +4,9 @@ import matplotlib.pyplot as plt
 from ultralytics import YOLO
 from ultralytics import FastSAM
 from ultralytics.models.fastsam import FastSAMPrompt
+from ultralytics.models.sam import Predictor as SAMPredictor
 from time import time
+
 
 def plot_bounding_boxes(image, bounding_boxes):
     """
@@ -126,16 +128,24 @@ def calculate_convexity_and_plot_for_all_masks(image, mask_list):
     plt.imshow(cv2.cvtColor(image_copy, cv2.COLOR_BGR2RGB))
     plt.axis('off')
     plt.show()
+###########################################################3
 
-model_path='/home/mzahana/datasets/bundle_detection/v7_filtered-allclasses-withnightimages/runs/segment/v8x.seg.v7.filtered.allclasses.withnightimages/weights/best.pt'
-# Load a model
-yolo_model = YOLO(model_path)  # pretrained model
-
-sam_model = FastSAM('FastSAM-s.pt')  # or FastSAM-x.pt
-
-# Run inference on an image
 img_path='/home/mzahana/src/sam/bundle_1.jpg'
 img = cv2.imread(img_path)
+
+yolo_model_path='/home/mzahana/datasets/bundle_detection/v7_filtered-allclasses-withnightimages/runs/segment/v8x.seg.v7.filtered.allclasses.withnightimages/weights/best.pt'
+# Load a model
+yolo_model = YOLO(yolo_model_path)  # pretrained model
+
+# sam_model = FastSAM('FastSAM-s.pt')  # or FastSAM-x.pt
+
+# Create SAMPredictor
+sam_overrides = dict(conf=0.5, task='segment', mode='predict', imgsz=640, model="mobile_sam.pt", save=False)
+sam_predictor = SAMPredictor(overrides=sam_overrides)
+sam_predictor.set_image(img)  # set with np.ndarray
+
+# Run inference on an image
+
 yolo_results = yolo_model(img, conf=0.6, device=0)  # return a list of Results objects
 yolo_results = yolo_results[0].cpu()
 yolo_results.show()
@@ -158,16 +168,24 @@ if yolo_results.boxes:
         bx = box.xyxy[0].tolist()
         bx=[int(bx[0]), int(bx[1]), int(bx[2]), int(bx[3])]
 
-        # Run FastSAM inference on an image
-        everything_results = sam_model(img, device=0, retina_masks=True, imgsz=640, conf=0.7, iou=0.2, save=False, verbose=False)
-        prompt_process = FastSAMPrompt(img, everything_results, device=0)
-        results = prompt_process.box_prompt(bbox=bx)
+        # # Run FastSAM inference on an image
+        # everything_results = sam_model(img, device=0, retina_masks=True, imgsz=640, conf=0.7, iou=0.9, save=False, verbose=False)
+        # prompt_process = FastSAMPrompt(img, everything_results, device=0)
+        # results = prompt_process.box_prompt(bbox=bx)
+
+        # SAM
+        # Set image
+    
+        results = sam_predictor(bboxes=bx)
         results = results[0].cpu()
         for mask in results.masks:
             mask_points = [ (xy[0], xy[1])for xy in mask.xy[0].tolist()]
             calculate_convexity_and_plot(img, mask_points)
 
         plot_bounding_box(img, bx)
+
+# Reset image
+sam_predictor.reset_image()
 
 
 # Example usage:
