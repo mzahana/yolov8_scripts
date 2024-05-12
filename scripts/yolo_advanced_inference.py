@@ -4,6 +4,8 @@ from PIL import Image, ImageDraw, ImageFont
 import torch
 import networkx as nx
 import colorsys
+from shapely.geometry import Polygon
+from shapely.ops import nearest_points
 from ultralytics import YOLO
 
 def index_to_color(index, total):
@@ -14,6 +16,55 @@ def index_to_color(index, total):
     value = 0.95
     rgb = colorsys.hsv_to_rgb(hue, saturation, value)
     return tuple(int(x * 255) for x in rgb)
+
+def bbox_to_polygon(bbox):
+    """Convert a bounding box (x1, y1, x2, y2) to a polygon."""
+    x1, y1, x2, y2 = bbox
+    return Polygon([(x1, y1), (x2, y1), (x2, y2), (x1, y2)])
+
+def convert_mask_to_polygon_points(mask):
+    """
+    Convert a mask from YOLOv8 to a list of (x, y) tuples for each point in the mask.
+
+    Parameters:
+        mask: The mask object from YOLOv8 containing xy points.
+
+    Returns:
+        List of tuples representing the polygon's vertices.
+    """
+    return [(float(point[0]), float(point[1])) for point in mask.xy[0].tolist()]
+
+def are_polygons_in_proximity(mask1, mask2, threshold):
+    """
+    Check if two masks defined by polygons are in proximity based on a threshold distance.
+
+    Parameters:
+        mask1 (list of tuples): Points [(x1, y1), (x2, y2), ..., (xn, yn)] defining the first polygon.
+        mask2 (list of tuples): Points [(x1, y1), (x2, y2), ..., (xn, yn)] defining the second polygon.
+        threshold (float): Maximum distance between polygons to consider them as proximate.
+
+    Returns:
+        bool: True if polygons overlap or are within the threshold distance, False otherwise.
+    """
+    poly1 = Polygon(mask1)
+    poly2 = Polygon(mask2)
+
+    # Check for overlap
+    if poly1.intersects(poly2):
+        return True
+
+    # Compute the minimum distance between the two polygons
+    min_distance = poly1.distance(poly2)
+
+    return min_distance <= threshold
+
+def are_bbx_in_proximity(box1, box2, threshold) -> bool:
+    box1_polygon = bbox_to_polygon(box1)
+    # print(box1_polygon)
+    box2_polygon = bbox_to_polygon(box2)
+    # print(box2_polygon)
+
+    return are_polygons_in_proximity(box1_polygon, box2_polygon, threshold)
 
 def is_overlapping(box1, box2) -> bool:
     x1min, y1min, x1max, y1max = box1
@@ -41,6 +92,40 @@ def check_proximity(boxA, boxB, threshold):
     if is_overlapping(boxA, boxB):
         return True
     return is_within_distance(boxA, boxB, threshold)
+
+def min_horizontal_distance(box1, box2):
+    """
+    Calculate the minimum horizontal distance between two bounding boxes.
+
+    Parameters:
+        box1 (tuple): Coordinates (x1min, y1min, x1max, y1max) for the first box.
+        box2 (tuple): Coordinates (x2min, y2min, x2max, y2max) for the second box.
+
+    Returns:
+        float: The minimum horizontal distance between the two boxes.
+    """
+    x1min, _, x1max, _ = box1
+    x2min, _, x2max, _ = box2
+    if x1max < x2min:
+        return x2min - x1max  # Distance from box1 to box2
+    elif x2max < x1min:
+        return x1min - x2max  # Distance from box2 to box1
+    else:
+        return 0  # Overlapping or touching
+
+def are_bbx_in_horizontal_proximity(box1, box2, threshold):
+    """
+    Check if two bounding boxes are in horizontal proximity based on a threshold.
+
+    Parameters:
+        box1 (tuple): First bounding box.
+        box2 (tuple): Second bounding box.
+        threshold (float): Threshold for deciding proximity.
+
+    Returns:
+        bool: True if the horizontal distance is less than or equal to the threshold.
+    """
+    return min_horizontal_distance(box1, box2) <= threshold
 
 def merge_boxes(boxes):
     min_x = min(box[0] for box in boxes)
@@ -86,13 +171,47 @@ class YOLOInference:
             self.color_map[class_name] = index_to_color(class_idx, total_classes)
         return self.color_map[class_name]
 
+    # def cluster_bounding_boxes(self, boxes):
+    #     G = nx.Graph()
+    #     for i, box in enumerate(boxes):
+    #         G.add_node(i, box=box)
+    #     for i in range(len(boxes)):
+    #         for j in range(i + 1, len(boxes)):
+    #             # if check_proximity(boxes[i], boxes[j], self.threshold):
+    #             if are_bbx_in_proximity(boxes[i], boxes[j], self.threshold):
+    #                 G.add_edge(i, j)
+    #     clusters = list(nx.connected_components(G))
+    #     return clusters
     def cluster_bounding_boxes(self, boxes):
+        """
+        Group bounding boxes based on horizontal proximity.
+
+        Parameters:
+            boxes (list of tuples): List of bounding boxes.
+            threshold (float): Threshold to consider boxes as close.
+
+        Returns:
+            list of sets: Each set contains indices of boxes in the same cluster.
+        """
         G = nx.Graph()
         for i, box in enumerate(boxes):
             G.add_node(i, box=box)
         for i in range(len(boxes)):
             for j in range(i + 1, len(boxes)):
-                if check_proximity(boxes[i], boxes[j], self.threshold):
+                if are_bbx_in_horizontal_proximity(boxes[i], boxes[j], self.threshold):
+                    G.add_edge(i, j)
+        return list(nx.connected_components(G))
+    
+    def cluster_masks(self, masks):
+        G = nx.Graph()
+        for i, mask in enumerate(masks):
+            G.add_node(i, mask=mask)
+        for i in range(len(masks)):
+            for j in range(i + 1, len(masks)):
+                # if check_proximity(boxes[i], boxes[j], self.threshold):
+                polygon1= convert_mask_to_polygon_points(masks[i])
+                polygon2 = convert_mask_to_polygon_points(masks[j])
+                if are_polygons_in_proximity(polygon1, polygon2, self.threshold):
                     G.add_edge(i, j)
         clusters = list(nx.connected_components(G))
         return clusters
@@ -109,6 +228,7 @@ class YOLOInference:
                 class_names = [self.model.names[int(box.cls)] for box in results.boxes]
                 class_indices = [int(box.cls) for box in results.boxes]
                 
+                # clusters = self.cluster_bounding_boxes(boxes)
                 clusters = self.cluster_bounding_boxes(boxes)
                 merged_boxes = []
                 for cluster in clusters:
