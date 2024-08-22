@@ -5,25 +5,30 @@ This script performs inference on a set of images using a YOLOv8 model to detect
 It then saves the images and their corresponding labels into different directories based on the detected classes.
 
 Functionality:
-1. Loads a YOLOv8 model and performs segmentation on images.
+1. Loads a YOLOv8 model and performs segmentation or detection on images.
 2. Categorizes images into 'bundles' and 'single' based on detected object classes:
    - 'Bundle' class (0) images are saved in the 'bundles' directory.
    - 'Single-Item' class (1) images are saved in the 'single' directory.
-3. Optionally, saves images with drawn masks indicating detected objects.
-4. Simplifies the segmentation mask polygons to reduce the number of points while preserving the shape.
-5. Outputs the processed images and corresponding label files in the respective directories.
+3. Optionally, saves images with drawn masks or bounding boxes indicating detected objects.
+4. If masks are available, simplifies the segmentation mask polygons to reduce the number of points while preserving the shape.
+5. If masks are not available, generates bounding box labels in the YOLOv8 format.
+6. Outputs the processed images and corresponding label files in the respective directories.
+7. Supports reading .png, .jpg, and .tif images.
+8. Allows optional resizing of images to specified dimensions before passing them to the model.
 
 Usage:
-    python3 auto_labeler.py <image_dir> <model_path> [--save-masked-images] [--epsilon <value>]
+    python3 auto_labeler.py <image_dir> <model_path> [--save-masked-images] [--epsilon <value>] [--resize-height <height>] [--resize-width <width>]
 
 Arguments:
-    image_dir: Path to the directory containing images (PNG or JPG format).
+    image_dir: Path to the directory containing images (PNG, JPG, or TIF format).
     model_path: Path to the YOLOv8 .pt model file.
-    --save-masked-images: Optional flag to save images with drawn masks.
+    --save-masked-images: Optional flag to save images with drawn masks or bounding boxes.
     --epsilon: Optional value for polygon simplification (default: 0.01).
+    --resize-height: Optional height to resize the images before passing them to the model.
+    --resize-width: Optional width to resize the images before passing them to the model.
 
 Example:
-    python3 auto_labeler.py /path/to/images /path/to/model.pt --save-masked-images --epsilon 0.02
+    python3 auto_labeler.py /path/to/images /path/to/model.pt --save-masked-images --epsilon 0.02 --resize-height 640 --resize-width 480
 """
 
 import os
@@ -36,12 +41,14 @@ import cv2
 import numpy as np
 
 class YOLOInference:
-    def __init__(self, model_path, image_dir, confidence=0.5, save_masked_images=False, epsilon=0.01):
+    def __init__(self, model_path, image_dir, confidence=0.5, save_masked_images=False, epsilon=0.01, resize_height=None, resize_width=None):
         self.model_path_ = model_path
         self.image_dir_ = Path(image_dir)
         self.confidence_ = confidence
         self.save_masked_images_ = save_masked_images
         self.epsilon_ = epsilon
+        self.resize_height_ = resize_height
+        self.resize_width_ = resize_width
 
         # Define parent directory and output directories for images and labels
         self.parent_dir_ = self.image_dir_.parent
@@ -56,7 +63,7 @@ class YOLOInference:
             dir.mkdir(parents=True, exist_ok=True)
         
         # Load model with explicit task definition
-        self.model_ = YOLO(self.model_path_, task='segment')
+        self.model_ = YOLO(self.model_path_, task='segment' if 'segment' in self.model_path_ else 'detect')
         self.device_ = "cuda:0" if torch.cuda.is_available() else "cpu"
         
     def draw_masks(self, image, masks, classes):
@@ -66,6 +73,13 @@ class YOLOInference:
             mask = cv2.resize(mask, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
             contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             cv2.drawContours(image, contours, -1, color, 2)
+        return image
+
+    def draw_bounding_boxes(self, image, boxes, classes):
+        for box, cls in zip(boxes, classes):
+            color = (0, 255, 0) if cls == 0 else (0, 0, 255)  # Green for Bundle, Red for Single-Item
+            x1, y1, x2, y2 = map(int, box[:4])
+            cv2.rectangle(image, (x1, y1), (x2, y2), color, 2)
         return image
 
     def simplify_contour(self, contour):
@@ -79,14 +93,24 @@ class YOLOInference:
         single_count = 0
 
         # Iterate over images in the image directory
-        image_paths = list(self.image_dir_.glob('*.png')) + list(self.image_dir_.glob('*.jpg'))
+        image_paths = list(self.image_dir_.glob('*.png')) + list(self.image_dir_.glob('*.jpg')) + list(self.image_dir_.glob('*.tif'))
         total_images = len(image_paths)
         
         for img_file in tqdm(image_paths, desc="Processing Images"):
             try:
+                # Read the image
+                img = cv2.imread(str(img_file))
+                if img is None:
+                    print(f"WARNING ⚠️ Unable to read image {img_file}")
+                    continue
+
+                # Optionally resize the image
+                if self.resize_height_ is not None and self.resize_width_ is not None:
+                    img = cv2.resize(img, (self.resize_width_, self.resize_height_))
+
                 # Perform inference on each image
                 results = self.model_.predict(
-                    source=str(img_file),
+                    source=img,
                     verbose=False,
                     stream=False,
                     conf=self.confidence_,
@@ -101,7 +125,8 @@ class YOLOInference:
             all_single = True
             label_data = []
 
-            if results.masks and results.boxes:
+            # If masks are available, generate mask labels
+            if hasattr(results, 'masks') and results.masks:
                 for box_data, mask_data in zip(results.boxes, results.masks.data):
                     class_id = int(box_data.cls)
                     if class_id == 0:  # Bundle class
@@ -120,35 +145,66 @@ class YOLOInference:
                             continue  # Skip contours that are too small to be valid polygons
                         normalized_points = [(point[0][0] / results.orig_shape[1], point[0][1] / results.orig_shape[0]) for point in simplified_contour]
                         label_data.append((class_id, normalized_points))
-                
-                # Prepare label content
-                label_file_content = ""
+
+            # If no masks, generate bounding box labels
+            elif hasattr(results, 'boxes') and results.boxes:
+                for box_data in results.boxes:
+                    class_id = int(box_data.cls)
+                    if class_id == 0:  # Bundle class
+                        contains_bundle = True
+                        all_single = False
+                    elif class_id == 1:  # Single-Item class
+                        all_single = True
+
+                    # YOLOv8 format: class_id center_x center_y width height (normalized)
+                    x1, y1, x2, y2 = box_data.xyxy[0]
+                    width = x2 - x1
+                    height = y2 - y1
+                    center_x = x1 + width / 2
+                    center_y = y1 + height / 2
+                    normalized_bbox = [
+                        class_id,
+                        center_x / img.shape[1],
+                        center_y / img.shape[0],
+                        width / img.shape[1],
+                        height / img.shape[0]
+                    ]
+                    label_data.append(normalized_bbox)
+
+            # Prepare label content
+            label_file_content = ""
+            if hasattr(results, 'masks') and results.masks:
                 for class_id, points in label_data:
                     points_str = " ".join(f"{x:.6f} {y:.6f}" for x, y in points)
-                    label_file_content += f"{class_id} {points_str}\n"
+                    label_file_content += f"{int(class_id)} {points_str}\n"
+            else:
+                for bbox in label_data:
+                    label_file_content += f"{int(bbox[0])} " + " ".join(f"{x:.6f}" for x in bbox[1:]) + "\n"
                 
-                # Determine the corresponding label file
-                label_file_path = img_file.with_suffix('.txt')
+            # Determine the corresponding label file
+            label_file_path = img_file.with_suffix('.txt')
                 
-                if contains_bundle:
-                    # Save image and label in the bundle directories
-                    shutil.copy(img_file, self.bundle_images_dir_)
-                    bundle_count += 1
-                    with open(self.bundle_labels_dir_ / label_file_path.name, 'w') as f:
-                        f.write(label_file_content)
-                elif all_single:
-                    # Save image and label in the single directories
-                    shutil.copy(img_file, self.single_images_dir_)
-                    single_count += 1
-                    with open(self.single_labels_dir_ / label_file_path.name, 'w') as f:
-                        f.write(label_file_content)
+            if contains_bundle:
+                # Save image and label in the bundle directories
+                shutil.copy(img_file, self.bundle_images_dir_)
+                bundle_count += 1
+                with open(self.bundle_labels_dir_ / label_file_path.name, 'w') as f:
+                    f.write(label_file_content)
+            elif all_single:
+                # Save image and label in the single directories
+                shutil.copy(img_file, self.single_images_dir_)
+                single_count += 1
+                with open(self.single_labels_dir_ / label_file_path.name, 'w') as f:
+                    f.write(label_file_content)
 
-                # Optionally save the masked image
-                if self.save_masked_images_:
-                    img = cv2.imread(str(img_file))
+            # Optionally save the masked image or with bounding boxes
+            if self.save_masked_images_:
+                if hasattr(results, 'masks') and results.masks:
                     masked_img = self.draw_masks(img, results.masks.data, results.boxes.cls)
-                    masked_img_path = self.masked_images_dir_ / img_file.name
-                    cv2.imwrite(str(masked_img_path), masked_img)
+                else:
+                    masked_img = self.draw_bounding_boxes(img, results.boxes.xyxy, results.boxes.cls)
+                masked_img_path = self.masked_images_dir_ / img_file.name
+                cv2.imwrite(str(masked_img_path), masked_img)
 
         # Print the summary
         print(f"Total images processed: {total_images}")
@@ -162,8 +218,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="YOLOv8 Inference Script")
     parser.add_argument("image_dir", type=str, help="Path to the directory containing images")
     parser.add_argument("model_path", type=str, help="Path to the YOLOv8 .pt model")
-    parser.add_argument("--save-masked-images", action="store_true", help="Save images with drawn masks")
+    parser.add_argument("--save-masked-images", action="store_true", help="Save images with drawn masks or bounding boxes")
     parser.add_argument("--epsilon", type=float, default=0.01, help="Epsilon value for polygon simplification")
+    parser.add_argument("--resize-height", type=int, help="Height to resize images before processing")
+    parser.add_argument("--resize-width", type=int, help="Width to resize images before processing")
 
     args = parser.parse_args()
 
@@ -172,7 +230,9 @@ if __name__ == "__main__":
         image_dir=args.image_dir,
         confidence=0.5,
         save_masked_images=args.save_masked_images,
-        epsilon=args.epsilon
+        epsilon=args.epsilon,
+        resize_height=args.resize_height,
+        resize_width=args.resize_width
     )
 
     yolo_inference.run_inference()
