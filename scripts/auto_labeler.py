@@ -15,6 +15,7 @@ Functionality:
 6. Outputs the processed images and corresponding label files in the respective directories.
 7. Supports reading .png, .jpg, and .tif images.
 8. Allows optional resizing of images to specified dimensions before passing them to the model.
+9. Always saves images in the individual folders as `.jpg`.
 
 Usage:
     python3 auto_labeler.py <image_dir> <model_path> [--save-masked-images] [--epsilon <value>] [--resize-height <height>] [--resize-width <width>]
@@ -184,18 +185,20 @@ class YOLOInference:
             # Determine the corresponding label file
             label_file_path = img_file.with_suffix('.txt')
                 
+            # Save image and label in the respective directories
             if contains_bundle:
-                # Save image and label in the bundle directories
-                shutil.copy(img_file, self.bundle_images_dir_)
+                image_save_path = self.bundle_images_dir_ / (img_file.stem + ".jpg")
                 bundle_count += 1
                 with open(self.bundle_labels_dir_ / label_file_path.name, 'w') as f:
                     f.write(label_file_content)
             elif all_single:
-                # Save image and label in the single directories
-                shutil.copy(img_file, self.single_images_dir_)
+                image_save_path = self.single_images_dir_ / (img_file.stem + ".jpg")
                 single_count += 1
                 with open(self.single_labels_dir_ / label_file_path.name, 'w') as f:
                     f.write(label_file_content)
+
+            # Save the image as .jpg
+            cv2.imwrite(str(image_save_path), img)
 
             # Optionally save the masked image or with bounding boxes
             if self.save_masked_images_:
@@ -203,7 +206,7 @@ class YOLOInference:
                     masked_img = self.draw_masks(img, results.masks.data, results.boxes.cls)
                 else:
                     masked_img = self.draw_bounding_boxes(img, results.boxes.xyxy, results.boxes.cls)
-                masked_img_path = self.masked_images_dir_ / img_file.name
+                masked_img_path = self.masked_images_dir_ / (img_file.stem + ".jpg")
                 cv2.imwrite(str(masked_img_path), masked_img)
 
         # Print the summary
