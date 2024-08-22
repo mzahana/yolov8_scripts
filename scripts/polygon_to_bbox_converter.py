@@ -1,3 +1,34 @@
+"""
+This script converts polygon annotations in label files to bounding boxes and optionally visualizes 
+the results by overlaying the bounding boxes on the corresponding images. The converted bounding 
+boxes are saved in a new directory, and a single combined image showing a random selection of images 
+with their bounding boxes is saved for visual verification.
+
+The input label files should be in the format:
+    class_id x1 y1 x2 y2 ...
+
+The output label files will be in the format:
+    class_id center_x center_y width height
+
+Dependencies:
+- numpy
+- argparse
+- random
+- matplotlib
+- tqdm
+
+Example usage:
+--------------
+To convert polygon annotations to bounding boxes and visualize the result:
+
+    python polygon_to_bbox_converter.py /path/to/labels/folder --images_folder /path/to/images/folder --num_images 6
+
+Parameters:
+-----------
+- labels_folder: Path to the folder containing the label .txt files with polygon annotations.
+- images_folder (optional): Path to the folder containing the corresponding images for visualization.
+- num_images (optional): Number of random images to visualize with bounding boxes (default: 6).
+"""
 import os
 import numpy as np
 import argparse
@@ -14,7 +45,14 @@ def convert_polygon_to_bbox(polygon_coords):
     max_x = max(x_coords)
     min_y = min(y_coords)
     max_y = max(y_coords)
-    return [min_x, min_y, max_x, max_y]
+    
+    # Calculate center, width, and height
+    center_x = (min_x + max_x) / 2
+    center_y = (min_y + max_y) / 2
+    width = max_x - min_x
+    height = max_y - min_y
+    
+    return [center_x, center_y, width, height]
 
 def process_labels(labels_folder, images_folder=None, num_images=6):
     # Create the output directory if it doesn't exist
@@ -78,14 +116,17 @@ def save_combined_image(images_folder, labels_folder, label_files, num_images, l
                 label_id = elements[0]
                 bbox = list(map(float, elements[1:]))
 
-                # Denormalize coordinates
-                x_min = bbox[0] * w
-                y_min = bbox[1] * h
-                x_max = bbox[2] * w
-                y_max = bbox[3] * h
+                # Denormalize coordinates for plotting
+                center_x = bbox[0] * w
+                center_y = bbox[1] * h
+                width = bbox[2] * w
+                height = bbox[3] * h
+
+                x_min = center_x - width / 2
+                y_min = center_y - height / 2
 
                 # Draw bounding box on the image
-                rect = Rectangle((x_min, y_min), x_max - x_min, y_max - y_min, linewidth=2, edgecolor='green', facecolor='none')
+                rect = Rectangle((x_min, y_min), width, height, linewidth=2, edgecolor='green', facecolor='none')
                 axs[i].add_patch(rect)
                 axs[i].text(x_min, y_min - 10, label_id, color='green', fontsize=12, weight='bold')
 
