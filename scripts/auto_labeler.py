@@ -16,6 +16,7 @@ Functionality:
 7. Supports reading .png, .jpg, and .tif images.
 8. Allows optional resizing of images to specified dimensions before passing them to the model.
 9. Always saves images in the individual folders as `.jpg`.
+10. Displays class labels (text) next to detected objects in masked images.
 
 Usage:
     python3 auto_labeler.py <image_dir> <model_path> [--save-masked-images] [--epsilon <value>] [--resize-height <height>] [--resize-width <width>]
@@ -59,6 +60,12 @@ class YOLOInference:
         self.single_labels_dir_ = self.parent_dir_ / "single/labels"
         self.masked_images_dir_ = self.parent_dir_ / "masked_images"
         
+        # Define class names mapping
+        self.class_names_ = {
+            0: "Bundle",
+            1: "Single-Item"
+        }
+        
         # Ensure all output directories exist
         for dir in [self.bundle_images_dir_, self.bundle_labels_dir_, self.single_images_dir_, self.single_labels_dir_, self.masked_images_dir_]:
             dir.mkdir(parents=True, exist_ok=True)
@@ -67,20 +74,97 @@ class YOLOInference:
         self.model_ = YOLO(self.model_path_, task='segment' if 'segment' in self.model_path_ else 'detect')
         self.device_ = "cuda:0" if torch.cuda.is_available() else "cpu"
         
-    def draw_masks(self, image, masks, classes):
-        for mask, cls in zip(masks, classes):
-            color = (0, 255, 0) if cls == 0 else (0, 0, 255)  # Green for Bundle, Red for Single-Item
+    def get_text_position(self, mask=None, box=None):
+        """Calculate optimal text position based on mask or bounding box"""
+        if mask is not None:
+            # For masks, find the top-left corner of the mask
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if contours:
+                # Get the bounding rectangle of the largest contour
+                largest_contour = max(contours, key=cv2.contourArea)
+                x, y, w, h = cv2.boundingRect(largest_contour)
+                return (x, y - 10 if y > 20 else y + h + 20)
+        elif box is not None:
+            # For bounding boxes, use top-left corner
+            x1, y1, x2, y2 = map(int, box[:4])
+            return (x1, y1 - 10 if y1 > 20 else y2 + 20)
+        
+        return (10, 30)  # Default position
+
+    def draw_masks(self, image, masks, classes, boxes=None):
+        """Draw masks with class labels"""
+        for i, (mask, cls) in enumerate(zip(masks, classes)):
+            class_id = int(cls)
+            color = (0, 255, 0) if class_id == 0 else (0, 0, 255)  # Green for Bundle, Red for Single-Item
+            text_color = (255, 255, 255)  # White text
+            
+            # Prepare mask
             mask = mask.cpu().numpy().astype(np.uint8)
             mask = cv2.resize(mask, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
+            
+            # Draw contours
             contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             cv2.drawContours(image, contours, -1, color, 2)
+            
+            # Get class name and confidence
+            class_name = self.class_names_.get(class_id, f"Class_{class_id}")
+            
+            # Calculate text position
+            text_pos = self.get_text_position(mask=mask)
+            
+            # Draw text background rectangle for better visibility
+            text = class_name
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.7
+            thickness = 2
+            
+            (text_width, text_height), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+            
+            # Draw background rectangle
+            cv2.rectangle(image, 
+                         (text_pos[0] - 2, text_pos[1] - text_height - 2),
+                         (text_pos[0] + text_width + 2, text_pos[1] + baseline + 2),
+                         color, -1)
+            
+            # Draw text
+            cv2.putText(image, text, text_pos, font, font_scale, text_color, thickness)
+            
         return image
 
     def draw_bounding_boxes(self, image, boxes, classes):
+        """Draw bounding boxes with class labels"""
         for box, cls in zip(boxes, classes):
-            color = (0, 255, 0) if cls == 0 else (0, 0, 255)  # Green for Bundle, Red for Single-Item
+            class_id = int(cls)
+            color = (0, 255, 0) if class_id == 0 else (0, 0, 255)  # Green for Bundle, Red for Single-Item
+            text_color = (255, 255, 255)  # White text
+            
+            # Draw bounding box
             x1, y1, x2, y2 = map(int, box[:4])
             cv2.rectangle(image, (x1, y1), (x2, y2), color, 2)
+            
+            # Get class name
+            class_name = self.class_names_.get(class_id, f"Class_{class_id}")
+            
+            # Calculate text position
+            text_pos = self.get_text_position(box=box)
+            
+            # Draw text background rectangle for better visibility
+            text = class_name
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.7
+            thickness = 2
+            
+            (text_width, text_height), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+            
+            # Draw background rectangle
+            cv2.rectangle(image, 
+                         (text_pos[0] - 2, text_pos[1] - text_height - 2),
+                         (text_pos[0] + text_width + 2, text_pos[1] + baseline + 2),
+                         color, -1)
+            
+            # Draw text
+            cv2.putText(image, text, text_pos, font, font_scale, text_color, thickness)
+            
         return image
 
     def simplify_contour(self, contour):
@@ -202,10 +286,14 @@ class YOLOInference:
 
             # Optionally save the masked image or with bounding boxes
             if self.save_masked_images_:
+                # Create a copy of the image for visualization
+                viz_img = img.copy()
+                
                 if hasattr(results, 'masks') and results.masks:
-                    masked_img = self.draw_masks(img, results.masks.data, results.boxes.cls)
+                    masked_img = self.draw_masks(viz_img, results.masks.data, results.boxes.cls, results.boxes.xyxy)
                 else:
-                    masked_img = self.draw_bounding_boxes(img, results.boxes.xyxy, results.boxes.cls)
+                    masked_img = self.draw_bounding_boxes(viz_img, results.boxes.xyxy, results.boxes.cls)
+                
                 masked_img_path = self.masked_images_dir_ / (img_file.stem + ".jpg")
                 cv2.imwrite(str(masked_img_path), masked_img)
 
