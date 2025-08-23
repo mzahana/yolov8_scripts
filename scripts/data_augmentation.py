@@ -1,5 +1,6 @@
 """
 Copyright (c) Mohamed Abdelkader 2024 - Modified for multi-class support
+Fixed version with proper coordinate transformation for rotation
 
 This script performs data augmentation for instance segmentation tasks. It extracts objects based on polygon annotations
 from label files and places them on a specified background image, applying various augmentations such as rotation, blurring,
@@ -40,13 +41,35 @@ import sys
 from tqdm import tqdm
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
+def transform_coordinates(coords, rotation_matrix, scale_factor, translation):
+    """Transform coordinates through rotation, scaling, and translation"""
+    transformed_coords = []
+    
+    for coord in coords:
+        # Apply rotation
+        if rotation_matrix is not None:
+            # Convert to homogeneous coordinates
+            point = np.array([coord[0], coord[1], 1])
+            rotated_point = rotation_matrix @ point
+            coord = [rotated_point[0], rotated_point[1]]
+        
+        # Apply scaling
+        if scale_factor != 1.0:
+            coord = [coord[0] * scale_factor, coord[1] * scale_factor]
+        
+        # Apply translation
+        coord = [coord[0] + translation[0], coord[1] + translation[1]]
+        
+        transformed_coords.append(coord)
+    
+    return np.array(transformed_coords)
+
 def process_label_file(label_file, images_dir, labels_dir, background_img, output_dir, class_ids, num_augmentations, rotation_range, blur_range, scaling_range, contrast_range, region_scale, image_w, image_h, max_region_w, max_region_h, augment_together=False):
     label_path = os.path.join(labels_dir, label_file)
     with open(label_path, 'r') as lf:
         lines = lf.readlines()
 
     generated_objects_count = 0
-    results = []
 
     # Parse all objects of specified classes from the label file
     valid_objects = []
@@ -90,11 +113,18 @@ def process_label_file(label_file, images_dir, labels_dir, background_img, outpu
                 obj_roi = obj_roi[y:y + h, x:x + w]
                 mask_roi = mask[y:y + h, x:x + w]
 
-                # Apply augmentations
-                aug_obj, aug_mask, new_w, new_h = apply_augmentations(
+                # Get coordinates relative to ROI
+                coords_relative = coords_denorm - [x, y]
+
+                # Apply augmentations and get transformation parameters
+                aug_obj, aug_mask, new_w, new_h, rotation_matrix, scale_factor = apply_augmentations(
                     obj_roi, mask_roi, w, h, rotation_range, blur_range, 
                     scaling_range, contrast_range, max_region_w, max_region_h
                 )
+
+                # Skip if augmentation failed
+                if aug_obj is None or new_w <= 0 or new_h <= 0:
+                    continue
 
                 # Place object on background
                 rand_x = random.randint(0, max(image_w - new_w, 0))
@@ -107,10 +137,13 @@ def process_label_file(label_file, images_dir, labels_dir, background_img, outpu
                         aug_obj[:, :, c] * (aug_mask / 255)
                     )
 
-                # Calculate new coordinates for label
-                new_coords = (coords_denorm - [x, y]) * (new_w / w, new_h / h)
-                new_coords[:, 0] = (new_coords[:, 0] + rand_x) / image_w
-                new_coords[:, 1] = (new_coords[:, 1] + rand_y) / image_h
+                # Transform coordinates properly
+                translation = [rand_x, rand_y]
+                new_coords = transform_coordinates(coords_relative, rotation_matrix, scale_factor, translation)
+                
+                # Normalize coordinates
+                new_coords[:, 0] /= image_w
+                new_coords[:, 1] /= image_h
                 new_coords = new_coords.reshape(-1)
                 aug_labels.append(f"{obj_class_id} {' '.join(map(str, new_coords))}")
 
@@ -141,13 +174,20 @@ def process_label_file(label_file, images_dir, labels_dir, background_img, outpu
             obj_roi = obj_roi[y:y + h, x:x + w]
             mask_roi = mask[y:y + h, x:x + w]
 
+            # Get coordinates relative to ROI
+            coords_relative = coords_denorm - [x, y]
+
             # Augment the object multiple times
             for i in range(num_augmentations):
-                # Apply augmentations
-                aug_obj, aug_mask, new_w, new_h = apply_augmentations(
+                # Apply augmentations and get transformation parameters
+                aug_obj, aug_mask, new_w, new_h, rotation_matrix, scale_factor = apply_augmentations(
                     obj_roi, mask_roi, w, h, rotation_range, blur_range, 
                     scaling_range, contrast_range, max_region_w, max_region_h
                 )
+
+                # Skip if augmentation failed
+                if aug_obj is None or new_w <= 0 or new_h <= 0:
+                    continue
 
                 # Adjust position to ensure better distribution across the entire region
                 rand_x = random.randint(0, max(image_w - new_w, 0))
@@ -163,15 +203,20 @@ def process_label_file(label_file, images_dir, labels_dir, background_img, outpu
                         aug_obj[:, :, c] * (aug_mask / 255)
                     )
 
+                # Transform coordinates properly
+                translation = [rand_x, rand_y]
+                new_coords = transform_coordinates(coords_relative, rotation_matrix, scale_factor, translation)
+                
+                # Normalize coordinates
+                new_coords[:, 0] /= image_w
+                new_coords[:, 1] /= image_h
+                new_coords = new_coords.reshape(-1)
+
                 # Save augmented image and label
                 aug_image_name = f"{image_name.replace('.jpg', '')}_class_{obj_class_id}_aug_{i}.jpg"
                 aug_label_name = f"{label_file.replace('.txt', '')}_class_{obj_class_id}_aug_{i}.txt"
                 cv2.imwrite(os.path.join(output_dir, 'images', aug_image_name), bg_copy)
                 with open(os.path.join(output_dir, 'labels', aug_label_name), 'w') as lf_aug:
-                    new_coords = (coords_denorm - [x, y]) * (new_w / w, new_h / h)
-                    new_coords[:, 0] = (new_coords[:, 0] + rand_x) / image_w
-                    new_coords[:, 1] = (new_coords[:, 1] + rand_y) / image_h
-                    new_coords = new_coords.reshape(-1)
                     lf_aug.write(f"{obj_class_id} {' '.join(map(str, new_coords))}\n")
 
                 generated_objects_count += 1
@@ -179,16 +224,23 @@ def process_label_file(label_file, images_dir, labels_dir, background_img, outpu
     return generated_objects_count
 
 def apply_augmentations(obj_roi, mask_roi, w, h, rotation_range, blur_range, scaling_range, contrast_range, max_region_w, max_region_h):
-    """Apply augmentations to an object and return the augmented object, mask, and new dimensions"""
+    """Apply augmentations to an object and return the augmented object, mask, new dimensions, and transformation parameters"""
     aug_obj = obj_roi.copy()
     aug_mask = mask_roi.copy()
+    rotation_matrix = None
+    scale_factor = 1.0
+
+    # Check for minimum valid dimensions
+    if w <= 0 or h <= 0:
+        print(f"Warning: Invalid object dimensions (w={w}, h={h}). Skipping augmentation.")
+        return None, None, 0, 0, None, 1.0
 
     # Rotation
     if rotation_range:
         angle = random.uniform(*rotation_range)
-        matrix = cv2.getRotationMatrix2D((w // 2, h // 2), angle, 1.0)
-        aug_obj = cv2.warpAffine(aug_obj, matrix, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
-        aug_mask = cv2.warpAffine(aug_mask, matrix, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+        rotation_matrix = cv2.getRotationMatrix2D((w // 2, h // 2), angle, 1.0)
+        aug_obj = cv2.warpAffine(aug_obj, rotation_matrix, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
+        aug_mask = cv2.warpAffine(aug_mask, rotation_matrix, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
 
     # Blurring
     if blur_range:
@@ -200,8 +252,18 @@ def apply_augmentations(obj_roi, mask_roi, w, h, rotation_range, blur_range, sca
     if scaling_range:
         scale_factor = random.uniform(*scaling_range)
         new_w, new_h = int(w * scale_factor), int(h * scale_factor)
-        aug_obj = cv2.resize(aug_obj, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-        aug_mask = cv2.resize(aug_mask, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+        
+        # Ensure minimum dimensions after scaling
+        new_w = max(1, new_w)
+        new_h = max(1, new_h)
+        
+        # Check if scaling would make object too small
+        if new_w > 0 and new_h > 0:
+            aug_obj = cv2.resize(aug_obj, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+            aug_mask = cv2.resize(aug_mask, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+        else:
+            new_w, new_h = w, h
+            scale_factor = 1.0
     else:
         new_w, new_h = w, h
 
@@ -211,12 +273,36 @@ def apply_augmentations(obj_roi, mask_roi, w, h, rotation_range, blur_range, sca
         aug_obj = cv2.convertScaleAbs(aug_obj, alpha=alpha, beta=0)
 
     # Ensure the object fits within the defined region scale
-    new_w = min(new_w, max_region_w)
-    new_h = min(new_h, max_region_h)
-    aug_mask = cv2.resize(aug_mask, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
-    aug_obj = cv2.resize(aug_obj, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+    if max_region_w > 0 and max_region_h > 0:
+        if new_w > max_region_w or new_h > max_region_h:
+            # Scale down to fit within region constraints
+            w_ratio = max_region_w / new_w if new_w > max_region_w else 1.0
+            h_ratio = max_region_h / new_h if new_h > max_region_h else 1.0
+            ratio = min(w_ratio, h_ratio)
+            
+            new_w = max(1, int(new_w * ratio))
+            new_h = max(1, int(new_h * ratio))
+            
+            if new_w > 0 and new_h > 0:
+                aug_mask = cv2.resize(aug_mask, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+                aug_obj = cv2.resize(aug_obj, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+                scale_factor *= ratio
+            else:
+                # If still invalid, return original dimensions
+                new_w, new_h = w, h
+                aug_obj = obj_roi.copy()
+                aug_mask = mask_roi.copy()
+                scale_factor = 1.0
 
-    return aug_obj, aug_mask, new_w, new_h
+    # Final check for valid dimensions
+    if new_w <= 0 or new_h <= 0:
+        print(f"Warning: Final dimensions invalid (new_w={new_w}, new_h={new_h}). Using original dimensions.")
+        new_w, new_h = w, h
+        aug_obj = obj_roi.copy()
+        aug_mask = mask_roi.copy()
+        scale_factor = 1.0
+
+    return aug_obj, aug_mask, new_w, new_h, rotation_matrix, scale_factor
 
 def augment_instance(image_dir, class_ids, background_img_path, output_dir=None, 
                      num_augmentations=3, rotation_range=None, blur_range=None, 
