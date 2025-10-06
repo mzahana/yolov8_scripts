@@ -6,9 +6,10 @@ It then saves the images and their corresponding labels into different directori
 
 Functionality:
 1. Loads a YOLOv8 model and performs segmentation or detection on images.
-2. Categorizes images into 'bundles' and 'single' based on detected object classes:
+2. Categorizes images into 'bundles' and 'single' based on detected object classes OR saves all in a single folder:
    - 'Bundle' class (0) images are saved in the 'bundles' directory.
    - 'Single-Item' class (1) images are saved in the 'single' directory.
+   - If --single-folder is used, all images are saved in 'labeled/images' and 'labeled/labels'.
 3. Optionally, saves images with drawn masks or bounding boxes indicating detected objects.
 4. If masks are available, simplifies the segmentation mask polygons to reduce the number of points while preserving the shape.
 5. If masks are not available, generates bounding box labels in the YOLOv8 format.
@@ -19,7 +20,7 @@ Functionality:
 10. Displays class labels (text) next to detected objects in masked images.
 
 Usage:
-    python3 auto_labeler.py <image_dir> <model_path> [--save-masked-images] [--epsilon <value>] [--resize-height <height>] [--resize-width <width>]
+    python3 auto_labeler.py <image_dir> <model_path> [--save-masked-images] [--epsilon <value>] [--resize-height <height>] [--resize-width <width>] [--single-folder]
 
 Arguments:
     image_dir: Path to the directory containing images (PNG, JPG, or TIF format).
@@ -28,9 +29,10 @@ Arguments:
     --epsilon: Optional value for polygon simplification (default: 0.01).
     --resize-height: Optional height to resize the images before passing them to the model.
     --resize-width: Optional width to resize the images before passing them to the model.
+    --single-folder: Optional flag to save all images in a single 'labeled' folder instead of separating by class.
 
 Example:
-    python3 auto_labeler.py /path/to/images /path/to/model.pt --save-masked-images --epsilon 0.02 --resize-height 640 --resize-width 480
+    python3 auto_labeler.py /path/to/images /path/to/model.pt --save-masked-images --epsilon 0.02 --resize-height 640 --resize-width 480 --single-folder
 """
 
 import os
@@ -43,7 +45,7 @@ import cv2
 import numpy as np
 
 class YOLOInference:
-    def __init__(self, model_path, image_dir, confidence=0.5, save_masked_images=False, epsilon=0.01, resize_height=None, resize_width=None):
+    def __init__(self, model_path, image_dir, confidence=0.5, save_masked_images=False, epsilon=0.01, resize_height=None, resize_width=None, single_folder=False):
         self.model_path_ = model_path
         self.image_dir_ = Path(image_dir)
         self.confidence_ = confidence
@@ -51,24 +53,37 @@ class YOLOInference:
         self.epsilon_ = epsilon
         self.resize_height_ = resize_height
         self.resize_width_ = resize_width
+        self.single_folder_ = single_folder
 
         # Define parent directory and output directories for images and labels
         self.parent_dir_ = self.image_dir_.parent
-        self.bundle_images_dir_ = self.parent_dir_ / "bundles/images"
-        self.bundle_labels_dir_ = self.parent_dir_ / "bundles/labels"
-        self.single_images_dir_ = self.parent_dir_ / "single/images"
-        self.single_labels_dir_ = self.parent_dir_ / "single/labels"
-        self.masked_images_dir_ = self.parent_dir_ / "masked_images"
+        
+        if self.single_folder_:
+            # Single folder structure
+            self.labeled_images_dir_ = self.parent_dir_ / "labeled/images"
+            self.labeled_labels_dir_ = self.parent_dir_ / "labeled/labels"
+            self.masked_images_dir_ = self.parent_dir_ / "masked_images"
+            
+            # Ensure output directories exist
+            for dir in [self.labeled_images_dir_, self.labeled_labels_dir_, self.masked_images_dir_]:
+                dir.mkdir(parents=True, exist_ok=True)
+        else:
+            # Separate folders by class
+            self.bundle_images_dir_ = self.parent_dir_ / "bundles/images"
+            self.bundle_labels_dir_ = self.parent_dir_ / "bundles/labels"
+            self.single_images_dir_ = self.parent_dir_ / "single/images"
+            self.single_labels_dir_ = self.parent_dir_ / "single/labels"
+            self.masked_images_dir_ = self.parent_dir_ / "masked_images"
+            
+            # Ensure all output directories exist
+            for dir in [self.bundle_images_dir_, self.bundle_labels_dir_, self.single_images_dir_, self.single_labels_dir_, self.masked_images_dir_]:
+                dir.mkdir(parents=True, exist_ok=True)
         
         # Define class names mapping
         self.class_names_ = {
             0: "Bundle",
             1: "Single-Item"
         }
-        
-        # Ensure all output directories exist
-        for dir in [self.bundle_images_dir_, self.bundle_labels_dir_, self.single_images_dir_, self.single_labels_dir_, self.masked_images_dir_]:
-            dir.mkdir(parents=True, exist_ok=True)
         
         # Load model with explicit task definition
         self.model_ = YOLO(self.model_path_, task='segment' if 'segment' in self.model_path_ else 'detect')
@@ -176,6 +191,7 @@ class YOLOInference:
         total_images = 0
         bundle_count = 0
         single_count = 0
+        labeled_count = 0
 
         # Iterate over images in the image directory
         image_paths = list(self.image_dir_.glob('*.png')) + list(self.image_dir_.glob('*.jpg')) + list(self.image_dir_.glob('*.tif'))
@@ -268,18 +284,26 @@ class YOLOInference:
                 
             # Determine the corresponding label file
             label_file_path = img_file.with_suffix('.txt')
-                
-            # Save image and label in the respective directories
-            if contains_bundle:
-                image_save_path = self.bundle_images_dir_ / (img_file.stem + ".jpg")
-                bundle_count += 1
-                with open(self.bundle_labels_dir_ / label_file_path.name, 'w') as f:
+            
+            # Save image and label based on the mode
+            if self.single_folder_:
+                # Save all in single folder
+                image_save_path = self.labeled_images_dir_ / (img_file.stem + ".jpg")
+                with open(self.labeled_labels_dir_ / label_file_path.name, 'w') as f:
                     f.write(label_file_content)
-            elif all_single:
-                image_save_path = self.single_images_dir_ / (img_file.stem + ".jpg")
-                single_count += 1
-                with open(self.single_labels_dir_ / label_file_path.name, 'w') as f:
-                    f.write(label_file_content)
+                labeled_count += 1
+            else:
+                # Save in separate folders by class
+                if contains_bundle:
+                    image_save_path = self.bundle_images_dir_ / (img_file.stem + ".jpg")
+                    bundle_count += 1
+                    with open(self.bundle_labels_dir_ / label_file_path.name, 'w') as f:
+                        f.write(label_file_content)
+                elif all_single:
+                    image_save_path = self.single_images_dir_ / (img_file.stem + ".jpg")
+                    single_count += 1
+                    with open(self.single_labels_dir_ / label_file_path.name, 'w') as f:
+                        f.write(label_file_content)
 
             # Save the image as .jpg
             cv2.imwrite(str(image_save_path), img)
@@ -299,8 +323,11 @@ class YOLOInference:
 
         # Print the summary
         print(f"Total images processed: {total_images}")
-        print(f"Images saved in 'bundles': {bundle_count}")
-        print(f"Images saved in 'single': {single_count}")
+        if self.single_folder_:
+            print(f"Images saved in 'labeled' folder: {labeled_count}")
+        else:
+            print(f"Images saved in 'bundles': {bundle_count}")
+            print(f"Images saved in 'single': {single_count}")
 
 # Example usage
 if __name__ == "__main__":
@@ -313,6 +340,7 @@ if __name__ == "__main__":
     parser.add_argument("--epsilon", type=float, default=0.01, help="Epsilon value for polygon simplification")
     parser.add_argument("--resize-height", type=int, help="Height to resize images before processing")
     parser.add_argument("--resize-width", type=int, help="Width to resize images before processing")
+    parser.add_argument("--single-folder", action="store_true", help="Save all images in a single 'labeled' folder instead of separating by class")
 
     args = parser.parse_args()
 
@@ -323,7 +351,8 @@ if __name__ == "__main__":
         save_masked_images=args.save_masked_images,
         epsilon=args.epsilon,
         resize_height=args.resize_height,
-        resize_width=args.resize_width
+        resize_width=args.resize_width,
+        single_folder=args.single_folder
     )
 
     yolo_inference.run_inference()

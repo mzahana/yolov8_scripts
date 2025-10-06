@@ -27,8 +27,7 @@ Note:
 - At least one augmentation type must be specified, otherwise the script will print an error and exit.
 
 Example:
-    python augment_instance.py /path/to/data 1 2 3 /path/to/background.jpg /path/to/output 
-    --num_augmentations 5 --rotation_range -20 20 --blur_range 0 3 --scaling_range 0.7 1.3 --contrast_range 0.8 1.2
+    python augment_instance.py /path/to/data 1 2 3 /path/to/background.jpg /path/to/output --num_augmentations 5 --rotation_range -20 20 --blur_range 0 3 --scaling_range 0.7 1.3 --contrast_range 0.8 1.2
 
 """
 
