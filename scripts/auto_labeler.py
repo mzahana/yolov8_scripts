@@ -86,7 +86,8 @@ class YOLOInference:
         }
         
         # Load model with explicit task definition
-        self.model_ = YOLO(self.model_path_, task='segment' if 'segment' in self.model_path_ else 'detect')
+        # self.model_ = YOLO(self.model_path_, task='segment' if 'segment' in self.model_path_ else 'detect')
+        self.model_ = YOLO(self.model_path_)
         self.device_ = "cuda:0" if torch.cuda.is_available() else "cpu"
         
     def get_text_position(self, mask=None, box=None):
