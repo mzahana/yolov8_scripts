@@ -25,10 +25,10 @@ Usage:
     python merge_datasets.py /path/to/dataset1 /path/to/dataset2 /path/to/output_dir
     
     # Re-split merged data with default ratios (80/10/10)
-    python merge_datasets.py /path/to/dataset1 /path/to/dataset2 /path/to/output_dir --resplit
+    python merge_yolo_datasets.py /path/to/dataset1 /path/to/dataset2 /path/to/output_dir --resplit
     
     # Re-split with custom ratios
-    python merge_datasets.py /path/to/dataset1 /path/to/dataset2 /path/to/output_dir --resplit --ratios 0.7 0.2 0.1
+    python merge_yolo_datasets.py /path/to/dataset1 /path/to/dataset2 /path/to/output_dir --resplit --ratios 0.7 0.2 0.1
 
 Copyright (c) Mohamed Abdelakder 2024
 Enhanced version with progress bars 2024

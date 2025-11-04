@@ -8,9 +8,9 @@
 # 5. Saving generated plots and analytics in a subdirectory inside the dataset directory.
 # 
 # Usage:
-# python script_name.py --data_dir <path_to_dataset_directory>
+# python dataset_analytics.py --data_dir <path_to_dataset_directory>
 # Example:
-# python script_name.py --data_dir ./dataset
+# python dataset_analytics.py --data_dir ./dataset
 # 
 # Copyright Mohamed Abdelkader 2024
 
